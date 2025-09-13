@@ -11,9 +11,8 @@ typedef struct {
 typedef struct {
     BoxMoverModel* model;
 
-    osMutexId_t model_mutex;
-
-    osMessageQueueId_t event_queue;
+    FuriMutex* model_mutex;
+    FuriMessageQueue* event_queue;
 
     ViewPort* view_port;
     Gui* gui;
@@ -21,18 +20,15 @@ typedef struct {
 
 void draw_callback(Canvas* canvas, void* ctx) {
     BoxMover* box_mover = ctx;
-    furi_check(osMutexAcquire(box_mover->model_mutex, osWaitForever) == osOK);
-
-    canvas_draw_box(
-        canvas, box_mover->model->x, box_mover->model->y, 4, 4); // Draw a box on the screen at x,y
-
-    osMutexRelease(box_mover->model_mutex);
+    if(furi_mutex_acquire(box_mover->model_mutex, FuriWaitForever) == FuriStatusOk) {
+        canvas_draw_box(canvas, box_mover->model->x, box_mover->model->y, 4, 4);
+        furi_mutex_release(box_mover->model_mutex);
+    }
 }
 
 void input_callback(InputEvent* input, void* ctx) {
     BoxMover* box_mover = ctx;
-    // Puts input onto event queue with priority 0, and waits until completion.
-    osMessageQueuePut(box_mover->event_queue, input, 0, osWaitForever);
+    furi_message_queue_put(box_mover->event_queue, input, FuriWaitForever);
 }
 
 BoxMover* box_mover_alloc() {
@@ -42,9 +38,8 @@ BoxMover* box_mover_alloc() {
     instance->model->x = 10;
     instance->model->y = 10;
 
-    instance->model_mutex = osMutexNew(NULL);
-
-    instance->event_queue = osMessageQueueNew(8, sizeof(InputEvent), NULL);
+    instance->model_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    instance->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
     instance->view_port = view_port_alloc();
     view_port_draw_callback_set(instance->view_port, draw_callback, instance);
@@ -57,13 +52,13 @@ BoxMover* box_mover_alloc() {
 }
 
 void box_mover_free(BoxMover* instance) {
-    view_port_enabled_set(instance->view_port, false); // Disabsles our ViewPort
-    gui_remove_view_port(instance->gui, instance->view_port); // Removes our ViewPort from the Gui
-    furi_record_close("gui"); // Closes the gui record
-    view_port_free(instance->view_port); // Frees memory allocated by view_port_alloc
-    osMessageQueueDelete(instance->event_queue);
+    view_port_enabled_set(instance->view_port, false);
+    gui_remove_view_port(instance->gui, instance->view_port);
+    furi_record_close("gui");
+    view_port_free(instance->view_port);
 
-    osMutexDelete(instance->model_mutex);
+    furi_message_queue_free(instance->event_queue);
+    furi_mutex_free(instance->model_mutex);
 
     free(instance->model);
     free(instance);
@@ -76,35 +71,38 @@ int32_t box_mover_app(void* p) {
 
     InputEvent event;
     for(bool processing = true; processing;) {
-        // Pops a message off the queue and stores it in `event`.
-        // No message priority denoted by NULL, and 100 ticks of timeout.
-        osStatus_t status = osMessageQueueGet(box_mover->event_queue, &event, NULL, 100);
-        furi_check(osMutexAcquire(box_mover->model_mutex, osWaitForever) == osOK);
-        if(status == osOK) {
-            if(event.type == InputTypePress) {
-                switch(event.key) {
-                case InputKeyUp:
-                    box_mover->model->y -= 2;
-                    break;
-                case InputKeyDown:
-                    box_mover->model->y += 2;
-                    break;
-                case InputKeyLeft:
-                    box_mover->model->x -= 2;
-                    break;
-                case InputKeyRight:
-                    box_mover->model->x += 2;
-                    break;
-                case InputKeyOk:
-                case InputKeyBack:
-                    processing = false;
-                    break;
+        FuriStatus status =
+            furi_message_queue_get(box_mover->event_queue, &event, 100);
+        if(furi_mutex_acquire(box_mover->model_mutex, FuriWaitForever) == FuriStatusOk) {
+            if(status == FuriStatusOk) {
+                if(event.type == InputTypePress) {
+                    switch(event.key) {
+                    case InputKeyUp:
+                        box_mover->model->y -= 2;
+                        break;
+                    case InputKeyDown:
+                        box_mover->model->y += 2;
+                        break;
+                    case InputKeyLeft:
+                        box_mover->model->x -= 2;
+                        break;
+                    case InputKeyRight:
+                        box_mover->model->x += 2;
+                        break;
+                    case InputKeyOk:
+                    case InputKeyBack:
+                        processing = false;
+                        break;
+                    default:
+                        break;
+                    }
                 }
             }
+            furi_mutex_release(box_mover->model_mutex);
         }
-        osMutexRelease(box_mover->model_mutex);
-        view_port_update(box_mover->view_port); // signals our draw callback
+        view_port_update(box_mover->view_port);
     }
+
     box_mover_free(box_mover);
     return 0;
 }
