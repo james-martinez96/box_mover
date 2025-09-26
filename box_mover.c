@@ -76,31 +76,42 @@ int32_t box_mover_app(void* p) {
         if(furi_mutex_acquire(box_mover->model_mutex, FuriWaitForever) == FuriStatusOk) {
             if(status == FuriStatusOk) {
                 if(event.type == InputTypePress) {
+                    bool moved = false;
                     switch(event.key) {
-                    case InputKeyUp:
-                        box_mover->model->y -= 2;
-                        break;
-                    case InputKeyDown:
-                        box_mover->model->y += 2;
-                        break;
-                    case InputKeyLeft:
-                        box_mover->model->x -= 2;
-                        break;
-                    case InputKeyRight:
-                        box_mover->model->x += 2;
-                        break;
-                    case InputKeyOk:
-                    case InputKeyBack:
-                        processing = false;
-                        break;
-                    default:
-                        break;
+                        case InputKeyUp:
+                            box_mover->model->y -= 2;
+                            moved = true;
+                            break;
+                        case InputKeyDown:
+                            box_mover->model->y += 2;
+                            moved = true;
+                            break;
+                        case InputKeyLeft:
+                            box_mover->model->x -= 2;
+                            moved = true;
+                            break;
+                        case InputKeyRight:
+                            box_mover->model->x += 2;
+                            moved = true;
+                            break;
+                        case InputKeyOk:
+                            // Send "scan" command over UART
+                            // const uint8_t scan_command[] = "scan\n";
+                            // furi_hal_serial_tx(serial_handle, scan_command, sizeof(scan_command) - 1);
+                            break;
+                        case InputKeyBack:
+                            processing = false;
+                            break;
+                        default:
+                            break;
                     }
+                    // Update viewport only if box moved
+                    if(moved) view_port_update(box_mover->view_port);
                 }
             }
             furi_mutex_release(box_mover->model_mutex);
         }
-        view_port_update(box_mover->view_port);
+        // view_port_update(box_mover->view_port);
     }
 
     box_mover_free(box_mover);
